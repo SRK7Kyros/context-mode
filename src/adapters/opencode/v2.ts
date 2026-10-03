@@ -241,10 +241,14 @@ function createCompactingAdapter(hooks: V1Hooks) {
     const output: CompactingOut = { context: [] };
     const snapshot = await handler({ sessionID: event.sessionID } as CompactingIn, output);
     const injected = output.context.filter((entry) => typeof entry === "string" && entry.length > 0);
-    if (injected.length > 0) {
-      event.result = {
-        summary: typeof snapshot === "string" && snapshot ? snapshot : injected.join("\n\n"),
-      };
+    // v1 pushed every string onto output.context and also returned the snapshot; deliver all of it
+    // so neither the resume snapshot nor the auto-injection block is dropped.
+    const parts = [
+      ...(typeof snapshot === "string" && snapshot ? [snapshot] : []),
+      ...injected,
+    ];
+    if (parts.length > 0) {
+      event.result = { summary: parts.join("\n\n") };
     }
   };
 }
