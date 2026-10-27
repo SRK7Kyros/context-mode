@@ -48,12 +48,14 @@
     ]
   },
   "bugs": "https://github.com/mksglu/context-mode/issues",
-  "main": "./build/adapters/opencode/plugin.js",
+  "main": "./build/adapters/opencode/v2-entry.js",
   "exports": {
-    ".": "./build/adapters/opencode/plugin.js",
-    "./plugin": "./build/adapters/opencode/plugin.js",
+    ".": "./build/adapters/opencode/v2-entry.js",
+    "./plugin": "./build/adapters/opencode/v2-entry.js",
     "./openclaw": "./build/adapters/openclaw/plugin.js",
-    "./cli": "./cli.bundle.mjs"
+    "./cli": "./cli.bundle.mjs",
+    "./server": "./build/adapters/opencode/v2-entry.js",
+    "./v2": "./build/adapters/opencode/v2-entry.js"
   },
   "bin": {
     "context-mode": "./cli.bundle.mjs"
@@ -76,9 +78,11 @@
     "scripts/heal-installed-plugins.mjs",
     "scripts/plugin-cache-integrity.mjs",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "server.js"
   ],
   "scripts": {
+    "build:opencode-v2": "bun scripts/build-opencode-v2-adapter.mjs",
     "build": "tsc && node -e \"if(process.platform!=='win32'){require('fs').chmodSync('build/cli.js',0o755)}\" && npm run bundle && npm run assert-bundle && npm run assert-asymmetric-drift",
     "assert-bundle": "node scripts/assert-bundle.mjs server.bundle.mjs cli.bundle.mjs hooks/session-extract.bundle.mjs hooks/session-snapshot.bundle.mjs hooks/session-db.bundle.mjs hooks/security.bundle.mjs",
     "assert-asymmetric-drift": "node scripts/assert-asymmetric-drift.mjs",
