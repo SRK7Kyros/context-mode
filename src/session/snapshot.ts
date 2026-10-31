@@ -9,8 +9,12 @@
  * contains a natural summary plus a runnable search tool call that retrieves
  * full details from the indexed knowledge base on demand.
  *
- * Zero truncation. Zero information loss. Full data lives in SessionDB;
- * the snapshot is a table of contents.
+ * Full data lives in SessionDB; the snapshot is a table of contents. It is
+ * still bounded: a compaction summary that grows without limit cannot shrink
+ * the context it is supposed to shrink. Measured on 2026-10-30, one session's
+ * `errors` section alone reached 185,993 chars (35 raw tool outputs) inside a
+ * 187,232-char summary, i.e. 99.3% of a ~47k-token resume block — the summary
+ * then sat above the compaction ceiling and every turn compacted again.
  */
 
 import { escapeXML } from "../truncate.js";
@@ -27,10 +31,19 @@ export interface StoredEvent {
 }
 
 export interface BuildSnapshotOpts {
-  maxBytes?: number;      // KEPT for backward compat but IGNORED
+  /** Hard ceiling for the whole resume block, in characters. */
+  maxBytes?: number;
   compactCount?: number;
   searchTool?: string;    // platform-specific tool name, default "ctx_search"
 }
+
+// A resume block that grows without bound cannot shrink the context it
+// replaces, so every number here is a cap: the whole block (≈6k tokens at 4
+// chars/token), one error's text, and how many errors are echoed.
+export const SNAPSHOT_MAX_CHARS = 24_000;
+export const ERROR_MAX_CHARS = 280;
+export const MAX_ERRORS = 8;
+
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -114,11 +127,12 @@ function buildFilesSection(fileEvents: StoredEvent[], searchTool: string): strin
 function buildErrorsSection(errorEvents: StoredEvent[], searchTool: string): string {
   if (errorEvents.length === 0) return "";
 
+  const newest = errorEvents.slice(-MAX_ERRORS);
   const summaryLines: string[] = [];
   const queryTerms: string[] = [];
 
-  for (const ev of errorEvents) {
-    summaryLines.push(`    ${escapeXML(ev.data)}`);
+  for (const ev of newest) {
+    summaryLines.push(`    ${escapeXML(truncateForSnapshot(ev.data, ERROR_MAX_CHARS))}`);
     queryTerms.push(ev.data);
   }
 
@@ -568,10 +582,24 @@ export function buildResumeSnapshot(
   // ── Assemble ──
   const header = `<session_resume events="${events.length}" compact_count="${compactCount}" generated_at="${now}">`;
   const footer = `</session_resume>`;
+  const budget = opts?.maxBytes && opts.maxBytes > 0 ? opts.maxBytes : SNAPSHOT_MAX_CHARS;
 
-  const body = sections.join("\n\n");
-  if (body) {
-    return `${header}\n\n${body}\n\n${footer}`;
+  const render = (parts: string[]) => {
+    const body = parts.join("\n\n");
+    return body ? `${header}\n\n${body}\n\n${footer}` : `${header}\n${footer}`;
+  };
+
+  // Sections are pushed in priority order and the recent-prompt safety net is
+  // last, so the cheapest loss is always the section just before it.
+  const kept = [...sections];
+  const omitted: string[] = [];
+  while (kept.length > 2 && render(kept).length > budget) {
+    const [dropped] = kept.splice(kept.length - 2, 1);
+    const tag = /<([a-z_]+)/.exec(dropped)?.[1];
+    if (tag) omitted.unshift(tag);
   }
-  return `${header}\n${footer}`;
+  if (omitted.length > 0) {
+    kept.push(`  <omitted sections="${omitted.join(",")}" note="Dropped to fit the summary budget; full detail is still searchable."/>`);
+  }
+  return render(kept);
 }
